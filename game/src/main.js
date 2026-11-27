@@ -18,6 +18,10 @@ import { AlertSystem } from './alerts.js';
 import { RunScoring } from './scoring.js';
 import { FlightCameraRig } from './camera.js';
 import { TerrainDetailSystem } from './terrain_detail.js';
+import { CampaignSystem } from './campaign.js';
+import { RadioSystem } from './radio.js';
+import { LogbookSystem } from './logbook.js';
+import { HangarSystem } from './hangar.js';
 
 
 const $ = (id) => document.getElementById(id);
@@ -59,6 +63,10 @@ const planeMesh = buildPlaneMesh();
 const runScoring = new RunScoring({ targetTime: 240, ringValue: 100, perfectRingBonus: 50 });
 const alertSystem = new AlertSystem(document.getElementById('alert-strip'));
 const cameraRig = new FlightCameraRig(camera, planeMesh.group);
+const campaign = new CampaignSystem();
+const radio = new RadioSystem();
+const logbook = new LogbookSystem();
+const hangar = new HangarSystem();
 let weatherSystem = null;
 let terrainDetails = null;
 
@@ -145,6 +153,9 @@ function resetRun(missionIndex) {
   buildLeg(0);
   const s = spawnPoint();
   flight.reset(s);
+  const selectedPlane = hangar.getSelectedPlane();
+  hangar.applyPhysicsProfile(flight, selectedPlane);
+  hangar.applyDamageProfile(damageModel, selectedPlane);
   flight.gearDown = true;
   flight.flaps = false;
   run.throttleTarget = 0;
@@ -216,12 +227,15 @@ function showScreen(name) {
   $('screen-title').classList.toggle('on', name === 'title');
   $('screen-pause').classList.toggle('on', name === 'pause');
   $('screen-over').classList.toggle('on', name === 'over');
+  const lbScreen = $('screen-logbook');
+  if (lbScreen) lbScreen.classList.toggle('on', name === 'logbook');
   if (name === 'play') hud.show();
   else hud.hide();
   const status = $('status');
   if (name === 'title') status.textContent = 'Samudra Sky Post title screen. Choose a mail run and fly.';
   if (name === 'pause') status.textContent = 'Game paused.';
   if (name === 'over') status.textContent = `${run.overTitle}. ${run.overSub}`;
+  if (name === 'logbook') status.textContent = 'Pilot logbook entries.';
 }
 
 function endRun(crashed, reason) {
@@ -248,6 +262,29 @@ function endRun(crashed, reason) {
     showScreen('over');
     if (crashed) audio.crash();
   }
+  const craft = hangar.getSelectedPlane();
+  campaign.recordRunResult(run.missionIndex, run.score, crashed, {
+    ringsHit: ringsDone(),
+    ringsTotal: totalRings(run.mission),
+    flightTimeSec: run.elapsed,
+    landingGrade: run.landingGrade,
+  });
+  logbook.recordSortie({
+    runId: run.mission.id,
+    runName: run.mission.name,
+    planeId: craft.id,
+    planeName: craft.name,
+    ringsHit: ringsDone(),
+    ringsTotal: totalRings(run.mission),
+    landingGrade: run.landingGrade || (crashed ? 'CRASH' : 'FIRM'),
+    fuelLeft: damageModel.fuel,
+    damage: damageModel.damage,
+    flightTimeSec: run.elapsed,
+    score: run.score,
+    crashed,
+  });
+  updateLogbookDisplay();
+  buildMissionPicks();
   try {
     const key = `samudra-best-${run.mission.id}`;
     const best = Number(window.localStorage.getItem(key) || 0);
@@ -400,6 +437,7 @@ function stepGame(dt, stick) {
       damageModel.hit(0.18);
     }
     run.landingGrade = grade;
+    radio.onTouchdown(grade, world.runways[run.mission.legs[run.legIndex].land]?.name || 'Runway');
     const landingResult = runScoring.addLanding({ touchDownSpeed: flight.speed, verticalVelocity: prevVspeed, centerlineOffset: offsetM });
     pts = landingResult.points;
     run.score = runScoring.ringScore + runScoring.landingScore;
@@ -437,6 +475,7 @@ function stepGame(dt, stick) {
   if (run.phase === 'takeoff' && !flight.grounded) {
     run.phase = 'rings';
     run.started = true;
+    radio.onTakeoff(world.runways[0]?.name || 'Samudra Field');
     updateObjective();
     hud.flash('AIRBORNE — FLY THE RINGS');
   }
@@ -451,11 +490,13 @@ function stepGame(dt, stick) {
       run.score = runScoring.ringScore + runScoring.landingScore;
       run.ringIndex += 1;
       audio.ring();
+      radio.onRingPassed(ringsDone(), totalRings(run.mission));
       hud.flash(`RING ${ringsDone()} / ${totalRings(run.mission)}  +100`);
       if (run.ringIndex < run.rings.length) {
         world.setRingState(run.rings[run.ringIndex], 'next');
       } else {
         run.phase = 'approach';
+        radio.onApproach(world.runways[run.mission.legs[run.legIndex].land]?.name || 'destination strip');
         updateObjective();
         hud.flash('ALL RINGS — BRING HER HOME');
       }
@@ -551,8 +592,8 @@ function refreshHud() {
     verticalSpeed: flight.vspeed,
     fuel: damageModel.fuel * 100,
     gearDown: flight.gearDown,
-    maxSpeed: 105,
-    stallSpeed: 28,
+    maxSpeed: hangar.getSelectedPlane().maxSpeedKnots,
+    stallSpeed: hangar.getSelectedPlane().stallSpeedKnots,
     distanceFromOrigin: flight.pos.length(),
     maxRange: 3200
   });
@@ -560,6 +601,8 @@ function refreshHud() {
   const windSpd = env.wind.length();
   const windDirDeg = Math.round(((Math.atan2(env.wind.x, env.wind.z) * 180 / Math.PI) + 360) % 360);
   const windStr = `${Math.round(windSpd * 1.94)} kt @ ${windDirDeg}°`;
+  const activeTrans = radio.update(FIXED_DT);
+  const craft = hangar.getSelectedPlane();
 
   hud.update({
     speedKt: flight.speedKnots,
@@ -581,7 +624,9 @@ function refreshHud() {
     fuel: damageModel.fuel,
     damage: damageModel.damage,
     alert: alertObj,
-    windReadout: windStr
+    windReadout: windStr,
+    radioLine: activeTrans ? { sender: activeTrans.callsignName, text: activeTrans.text, color: activeTrans.callsignColor } : null,
+    craftName: craft.name
   });
 
   setCockpitGauges(cockpitGroup, {
@@ -615,6 +660,7 @@ function frame(now) {
     if (keys.has('KeyP') || keys.has('Escape')) showScreen('pause');
     if (keys.has('KeyM')) {
       audio.setMuted(!audio.muted);
+      radio.setMuted(audio.muted);
       hud.flash(audio.muted ? 'SOUND OFF' : 'SOUND ON');
     }
     if (keys.has('KeyC')) {
@@ -667,10 +713,18 @@ function buildMissionPicks() {
   const box = $('mission-picks');
   box.innerHTML = '';
   MISSIONS.forEach((m, i) => {
+    const unlocked = campaign.isUnlocked(i);
     const b = document.createElement('button');
-    b.className = 'mission-pick' + (i === run.missionIndex ? ' sel' : '');
-    b.textContent = m.name;
+    b.className = 'mission-pick' + (i === run.missionIndex ? ' sel' : '') + (unlocked ? '' : ' locked');
+    b.textContent = unlocked ? m.name : `🔒 ${m.name}`;
+    if (!unlocked) {
+      b.style.opacity = '0.55';
+    }
     b.addEventListener('click', () => {
+      if (!campaign.isUnlocked(i)) {
+        hud.flash('MISSION LOCKED — COMPLETE EARLIER RUNS');
+        return;
+      }
       run.missionIndex = i;
       audio.unlock();
       audio.click();
@@ -678,6 +732,29 @@ function buildMissionPicks() {
       buildMissionPicks();
     });
     box.appendChild(b);
+  });
+}
+
+function updateLogbookDisplay() {
+  const el = $('logbook-content');
+  if (el) el.innerHTML = logbook.renderLogbookHtml();
+}
+
+function wireHangarCards() {
+  const cards = document.querySelectorAll('.hangar-card');
+  cards.forEach((card) => {
+    card.addEventListener('click', () => {
+      const planeId = card.getAttribute('data-plane-id');
+      if (hangar.selectPlane(planeId)) {
+        audio.click();
+        cards.forEach((c) => {
+          const isSel = c.getAttribute('data-plane-id') === planeId;
+          c.style.borderColor = isSel ? '#ffb347' : 'rgba(127,231,255,0.35)';
+          c.style.boxShadow = isSel ? '0 0 16px rgba(255,179,71,0.4)' : 'none';
+        });
+        resetRun(run.missionIndex);
+      }
+    });
   });
 }
 
@@ -703,6 +780,15 @@ $('btn-next').addEventListener('click', () => {
   buildMissionPicks();
   showScreen('play');
 });
+$('btn-logbook-over')?.addEventListener('click', () => {
+  audio.click();
+  updateLogbookDisplay();
+  showScreen('logbook');
+});
+$('btn-close-logbook')?.addEventListener('click', () => {
+  audio.click();
+  showScreen('over');
+});
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Enter' && run.screen === 'title') $('btn-fly').click();
   if (e.code === 'KeyP' && run.screen === 'pause') showScreen('play');
@@ -715,6 +801,8 @@ canvas.addEventListener('pointerdown', () => audio.unlock());
 // ------------------------------------------------------------------ start
 
 resetRun(0);
+wireHangarCards();
+updateLogbookDisplay();
 buildMissionPicks();
 showScreen('title');
 

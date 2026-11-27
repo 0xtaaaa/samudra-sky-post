@@ -32,6 +32,8 @@ export function createHud() {
     wind: $('hud-wind'),
     windReadout: $('wind-readout'),
     alertStrip: $('alert-strip'),
+    radioLine: $('radio-line'),
+    craftName: $('hud-craft'),
     cam: $('hud-cam'),
     fuel: $('hud-fuel'),
     dmg: $('hud-damage'),
@@ -163,6 +165,18 @@ export function createHud() {
 
       if (els.windReadout && s.windReadout !== undefined) {
         els.windReadout.textContent = s.windReadout;
+      }
+      if (els.radioLine && s.radioLine !== undefined) {
+        if (!s.radioLine) {
+          els.radioLine.textContent = '';
+          els.radioLine.style.opacity = '0';
+        } else {
+          els.radioLine.innerHTML = `<span style="color: ${s.radioLine.color || '#7fe7ff'}; font-weight: bold;">[${s.radioLine.sender || 'RADIO'}]</span> ${s.radioLine.text || ''}`;
+          els.radioLine.style.opacity = '1';
+        }
+      }
+      if (els.craftName && s.craftName !== undefined) {
+        els.craftName.textContent = s.craftName;
       }
       if (els.alertStrip && s.alert !== undefined) {
         if (!s.alert) {
