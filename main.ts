@@ -1,28 +1,46 @@
-import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildDossier } from './vendor/makefun-game.ts';
 
-const rootPath = fileURLToPath(new URL('.', import.meta.url));
-const outputTarget = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
-
-const gameSource = join(rootPath, 'game');
-const screenshotsSource = join(rootPath, 'screenshots');
-
-mkdirSync(outputTarget, { recursive: true });
-cpSync(gameSource, join(outputTarget, 'game'), { recursive: true });
-
-mkdirSync(join(outputTarget, 'screenshots'), { recursive: true });
-if (existsSync(screenshotsSource)) {
-  cpSync(screenshotsSource, join(outputTarget, 'screenshots'), { recursive: true });
+function copyPlan(root: string, target: string) {
+  return [
+    { src: join(root, 'game'), dst: join(target, 'game') },
+    { src: join(root, 'screenshots'), dst: join(target, 'screenshots') },
+  ];
 }
 
-const dossierBytes = buildDossier(outputTarget, {
-  text_max_bytes: 163840,
-  screenshots: { max: 4, max_bytes: 262144 },
-  game_max_files: 993,
-  game_max_bytes: 50331648,
-  game_path_max_bytes: 1000,
-});
+function copyTree(plan: Array<{ src: string; dst: string }>) {
+  for (const { src, dst } of plan) {
+    mkdirSync(dst, { recursive: true });
+    if (existsSync(src)) {
+      cpSync(src, dst, { recursive: true });
+    }
+  }
+}
 
-writeFileSync(join(outputTarget, 'dossier.json'), dossierBytes);
+function main(): number {
+  const root = fileURLToPath(new URL('.', import.meta.url));
+  const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+  const shotDir = join(root, 'screenshots');
+
+  if (!existsSync(shotDir) || readdirSync(shotDir).length === 0) {
+    console.error('screenshots directory is missing or empty');
+    return 1;
+  }
+
+  mkdirSync(out, { recursive: true });
+  copyTree(copyPlan(root, out));
+  const dossier = buildDossier(out, {
+    text_max_bytes: 163840,
+    screenshots: { max: 4, max_bytes: 262144 },
+    game_max_files: 993,
+    game_max_bytes: 50331648,
+    game_path_max_bytes: 1000,
+  });
+  writeFileSync(join(out, 'dossier.json'), dossier);
+  console.log(`Prepared dossier at ${out} (${dossier.byteLength ?? dossier.length} bytes)`);
+  return 0;
+}
+
+process.exitCode = main();
