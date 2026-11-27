@@ -16,6 +16,14 @@ function wrapAngle(a) {
   return a;
 }
 
+function setCaption(text) {
+  const el = document.getElementById('shot-caption');
+  if (el) {
+    el.textContent = text;
+    el.classList.add('on');
+  }
+}
+
 /**
  * The autopilot: steer toward `target` {x, y, z}, climb when the ground
  * ahead is close, keep the speed the phase asks for. Returns a stick input
@@ -52,6 +60,28 @@ function autopilot(sim, target, phase) {
   if (Math.abs(headingErr) > 0.5) throttle = 0.45; // slow down to turn tighter
   if (f.speed < 38) throttle = 0.85;
   return { pitch, bank, throttle };
+}
+
+function stageApproach(sim) {
+  // Final approach to Samudra Field runway 09: 1.1 nm out on extended centreline,
+  // 300 ft over threshold elevation, gear down, flaps down, holding ~78 kt.
+  sim.reset(0);
+  const rw = sim.runway(0);
+  const elev = sim.terrainHeight(rw.center.x, rw.center.z);
+  const axis = { x: Math.sin(rw.heading), z: Math.cos(rw.heading) };
+  const threshold = { x: rw.center.x - axis.x * 300, y: elev + 91.4, z: rw.center.z - axis.z * 300 };
+  const distOut = 1.1 * 1852;
+  const start = {
+    x: threshold.x - axis.x * (distOut + 39.0),
+    y: threshold.y,
+    z: threshold.z - axis.z * (distOut + 39.0),
+  };
+  const target = { x: rw.center.x, y: threshold.y - 2, z: rw.center.z };
+  sim.place(start.x, start.y, start.z, Math.PI - rw.heading, 38.0, { gearDown: true, flaps: true, ringIndex: 0, score: 350 });
+  sim.flight.throttle = 0.15;
+  for (let i = 0; i < 1 / STEP; i++) {
+    sim.tick(STEP, autopilot(sim, target, 'approach'));
+  }
 }
 
 /**
@@ -102,6 +132,65 @@ export function stageShot(name, sim) {
     }
     sim.setScreen('play');
     return { screen: 'play' };
+  }
+
+  if (name === 'approach') {
+    // Final approach to Samudra Field runway 09, 300 ft over the threshold,
+    // gear down, flaps down, about 78 kt, 1.1 nm out.
+    stageApproach(sim);
+    setCaption('FINAL APPROACH · SAMUDRA FIELD 09 · 1.1 nm');
+    sim.setScreen('play');
+    return { screen: 'play' };
+  }
+
+  if (name === 'ring') {
+    // On the reef ring course with the next glowing mail ring 260 m dead ahead.
+    sim.reset(1);
+    const ringTarget = { x: 300, y: 190, z: 1900 };
+    const prevRing = { x: 1000, y: 170, z: 1700 };
+    const dx = ringTarget.x - prevRing.x;
+    const dz = ringTarget.z - prevRing.z;
+    const len = Math.hypot(dx, dz);
+    const dirX = dx / len;
+    const dirZ = dz / len;
+    const heading = Math.atan2(dx, -dz);
+    const dist = 320;
+    sim.place(
+      ringTarget.x - dirX * dist,
+      ringTarget.y,
+      ringTarget.z - dirZ * dist,
+      heading,
+      44,
+      { gearDown: false, flaps: false, ringIndex: 3, score: 300 },
+    );
+    for (let i = 0; i < 1.4 / STEP; i++) {
+      sim.tick(STEP, autopilot(sim, ringTarget, 'rings'));
+    }
+    setCaption('MAIL RING 4/8 · REEF RUN');
+    sim.setScreen('play');
+    return { screen: 'play' };
+  }
+
+  if (name === 'storm') {
+    // The storm mission with rain and grey sky, next ring ahead.
+    sim.reset(4);
+    for (let i = 0; i < 26 / STEP; i++) {
+      const target = sim.target();
+      if (!target) break;
+      sim.tick(STEP, autopilot(sim, target, sim.phase()));
+    }
+    setCaption('STORM FRONT · RUN 5 OF 5');
+    sim.setScreen('play');
+    return { screen: 'play' };
+  }
+
+  if (name === 'cockpit') {
+    // Cockpit view on the same approach state as 'approach'.
+    stageApproach(sim);
+    if (sim.setCamera) sim.setCamera('cockpit');
+    setCaption('COCKPIT · SAMUDRA FIELD 09');
+    sim.setScreen('play');
+    return { screen: 'play', camera: 'cockpit' };
   }
 
   // 'play' (the default): twenty-six seconds into the first run, mid-course

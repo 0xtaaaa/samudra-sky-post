@@ -62,6 +62,12 @@
   .mission-pick:hover, .mission-pick.sel { border-color: #ffb347; color: #ffd9a0; }
   #vignette { position: fixed; inset: 0; pointer-events: none;
     background: radial-gradient(ellipse at center, transparent 55%, rgba(2, 8, 16, 0.42) 100%); }
+  #shot-caption { position: fixed; bottom: 84px; left: 50%; transform: translateX(-50%);
+    text-transform: uppercase; letter-spacing: .18em; font-size: 15px; color: #ffe9bd;
+    padding: 6px 16px; border-radius: 999px; background: rgba(6,18,30,.55);
+    border: 1px solid rgba(255,179,71,.45); text-shadow: 0 0 12px rgba(0,0,0,.8);
+    display: none; }
+  #shot-caption.on { display: block; }
 </style>
 <script type="importmap">
 { "imports": { "three": "./vendor/three.module.min.js" } }
@@ -71,6 +77,7 @@
 <canvas id="game" aria-label="Samudra Sky Post: fly the mail plane through the rings and land on the island strips"></canvas>
 <p id="status" role="status" aria-live="polite"></p>
 <div id="vignette"></div>
+<div id="shot-caption"></div>
 
 <div id="hud">
   <div id="hud-tl">
@@ -85,6 +92,7 @@
   </div>
   <div id="hud-tr">
     <div class="panel"><div class="label">Throttle</div><div class="value mono"><span id="hud-thr">0</span><span class="unit">%</span></div></div>
+    <div class="panel"><div class="label">Fuel · Dmg</div><div class="value mono" style="font-size:19px"><span id="hud-fuel">100</span><span class="unit">%</span> · <span id="hud-damage">0</span><span class="unit">%</span></div></div>
     <div class="panel"><div class="label">Flaps · Gear</div><div class="value mono" style="font-size:19px"><span id="hud-flaps">UP</span> · <span id="hud-gear">UP</span></div></div>
   </div>
   <div id="hud-bl">

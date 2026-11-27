@@ -5,6 +5,8 @@
 import * as THREE from 'three';
 import { createWorld } from './world.js';
 import { buildPlaneMesh, FlightModel } from './plane.js';
+import { buildCockpit, setCockpitGauges } from './cockpit.js';
+import { DamageModel } from './damage.js';
 import { MISSIONS, totalRings, maxScore, rankTitle, windVector, windText } from './missions.js';
 import { createHud } from './hud.js';
 import { createAudio } from './audio.js';
@@ -28,6 +30,8 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.06;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.5, 14000);
@@ -43,8 +47,16 @@ const hud = createHud();
 const audio = createAudio();
 const input = createInput();
 const flight = new FlightModel();
+const damageModel = new DamageModel();
 const planeMesh = buildPlaneMesh();
 scene.add(planeMesh.group);
+
+// Cockpit group mounted at pilot's eye inside planeMesh.group:
+// Pilot eye offset matches cockpit camera eye offset: (0, 1.15, -1.6)
+const cockpitGroup = buildCockpit();
+cockpitGroup.position.set(0, 1.15, -1.6);
+planeMesh.group.add(cockpitGroup);
+cockpitGroup.visible = false;
 
 // World cache: one world per time of day, rebuilt only when the sky changes.
 const worlds = new Map();
@@ -75,6 +87,7 @@ const run = {
   orbitYaw: 0,
   orbitPitch: 0.25,
   throttleTarget: 0,
+  landingGrade: '',
   overTitle: '',
   overSub: '',
   overStats: '',
@@ -122,6 +135,8 @@ function resetRun(missionIndex) {
   flight.gearDown = true;
   flight.flaps = false;
   run.throttleTarget = 0;
+  damageModel.service();
+  run.landingGrade = '';
   run.cameraMode = 'chase';
   run.orbitYaw = 0;
   run.orbitPitch = 0.25;
@@ -197,9 +212,10 @@ function endRun(crashed, reason) {
     : `${rankTitle(run.score, run.mission)} — ${run.mission.name}`;
   const mm = String(Math.floor(run.elapsed / 60)).padStart(2, '0');
   const ss = String(Math.floor(run.elapsed % 60)).padStart(2, '0');
+  const gradeText = run.landingGrade ? ` · Landing ${run.landingGrade}` : '';
   const stats = crashed
-    ? `Score ${run.score} · Rings ${ringsDone()} of ${totalRings(run.mission)} · Time ${mm}:${ss}`
-    : `Score ${run.score} (best possible ${maxScore(run.mission)}) · Time ${mm}:${ss} · Time bonus +${timeBonus}`;
+    ? `Score ${run.score} · Rings ${ringsDone()} of ${totalRings(run.mission)} · Time ${mm}:${ss}${gradeText}`
+    : `Score ${run.score} (best possible ${maxScore(run.mission)}) · Time ${mm}:${ss} · Time bonus +${timeBonus}${gradeText}`;
   run.overTitle = title;
   run.overSub = sub;
   run.overStats = stats;
@@ -258,6 +274,38 @@ function syncMesh(dt) {
   planeMesh.gear.position.y += (wantY - planeMesh.gear.position.y) * Math.min(1, dt * 4);
   // Tail light blinks twice a second.
   planeMesh.lights[2].visible = Math.floor(performance.now() / 500) % 2 === 0;
+
+  // In cockpit camera mode: show cockpit group and hide external plane mesh
+  // while keeping shadows (Three.js shadow map renders objects with castShadow=true,
+  // depthWrite=false & colorWrite=false hides from camera rendering while shadow map uses custom depth pass)
+  const isCockpit = run.cameraMode === 'cockpit';
+  cockpitGroup.visible = isCockpit;
+  for (const child of planeMesh.group.children) {
+    if (child !== cockpitGroup) {
+      child.traverse((o) => {
+        if (o.isMesh && o.material) {
+          const mats = Array.isArray(o.material) ? o.material : [o.material];
+          for (const m of mats) {
+            m.colorWrite = !isCockpit;
+            m.depthWrite = !isCockpit;
+          }
+        }
+        if (o.isLight || o.type === 'Mesh') {
+          // If light lamp spheres
+          if (isCockpit && o.geometry && o.geometry.type === 'SphereGeometry') {
+            o.visible = false;
+          } else if (!isCockpit && o.geometry && o.geometry.type === 'SphereGeometry') {
+            o.visible = true;
+          }
+        }
+      });
+    }
+  }
+
+  // Animate cockpit propeller blur
+  if (cockpitGroup.userData && cockpitGroup.userData.blades) {
+    cockpitGroup.userData.blades.rotation.z = flight.propAngle;
+  }
 }
 
 function stepGame(dt, stick) {
@@ -276,13 +324,55 @@ function stepGame(dt, stick) {
     bank: stick.bank,
   };
 
+  // Damage & fuel model update
+  const dmgStatus = damageModel.update(dt, flight.throttle);
+  if (dmgStatus.engineCut) {
+    // Cut throttle when fuel is exhausted
+    flight.throttle = Math.max(0, flight.throttle - dt * 2.0);
+    input.throttle = 0;
+    run.throttleTarget = 0;
+  }
+  // Roughness adds mechanical turbulence
+  if (dmgStatus.roughness > 0) {
+    env.turbulence += dmgStatus.roughness * 0.45;
+  }
+
+  const prevVspeed = flight.vspeed;
+  const prevBank = flight.bank;
+  const runwayUnderPlane = flight.runwayUnder(env.runways);
+  let touchdownOffset = 0;
+  if (runwayUnderPlane) {
+    const dx = flight.pos.x - runwayUnderPlane.center.x;
+    const dz = flight.pos.z - runwayUnderPlane.center.z;
+    touchdownOffset = Math.abs(dx * Math.cos(runwayUnderPlane.heading) - dz * Math.sin(runwayUnderPlane.heading));
+  }
+
   const before = flight.grounded;
   const result = flight.step(dt, input, env);
   if (!before && flight.grounded && result === 'landed') {
     audio.touchdown();
-    const soft = flight.vspeed > -2.5;
-    run.score += soft ? 300 : 250;
-    hud.flash(soft ? 'GREASED IT! +300' : 'TOUCHDOWN +250');
+    const fpm = Math.abs(prevVspeed * 196.85); // ft/min descent rate
+    const bankDeg = Math.abs((prevBank * 180) / Math.PI);
+    const offsetM = touchdownOffset;
+
+    let grade = 'FIRM';
+    let pts = 250;
+    if (fpm < 180 && bankDeg < 4.0 && offsetM < 6.0) {
+      grade = 'BUTTER';
+      pts = 400;
+    } else if (fpm < 420 && bankDeg < 10.0 && offsetM < 12.0) {
+      grade = 'FIRM';
+      pts = 250;
+    } else {
+      grade = 'BOUNCED';
+      pts = 150;
+      damageModel.hit(0.18);
+    }
+    run.landingGrade = grade;
+    run.score += pts;
+    const gradeMsg = `LANDING: ${grade} (+${pts})`;
+    if (typeof hud.showMessage === 'function') hud.showMessage(gradeMsg);
+    hud.flash(gradeMsg);
     if (run.phase === 'approach') {
       if (run.legIndex + 1 < run.mission.legs.length) {
         buildLeg(run.legIndex + 1);
@@ -296,6 +386,11 @@ function stepGame(dt, stick) {
     }
   }
   if (result === 'crashed' && !run.shotMode) {
+    run.landingGrade = 'CRASH';
+    damageModel.hit(1.0);
+    const crashMsg = 'LANDING: CRASH';
+    if (typeof hud.showMessage === 'function') hud.showMessage(crashMsg);
+    hud.flash(crashMsg);
     run.phase = 'done';
     endRun(true, 'She went down short of the strip. The post will fly again tomorrow.');
     return;
@@ -388,9 +483,20 @@ function updateCamera(dt) {
   const fwd = flight.forward;
   const up = new THREE.Vector3(0, 1, 0);
   if (run.cameraMode === 'cockpit') {
+    const lookStick = input.look();
+    run.orbitYaw = clamp(run.orbitYaw + lookStick.dx * 0.003, -1.4, 1.4);
+    run.orbitPitch = clamp(run.orbitPitch + lookStick.dy * 0.002, -0.6, 0.6);
+    run.orbitYaw *= Math.pow(0.4, dt);
+    run.orbitPitch *= Math.pow(0.4, dt);
+
     const eye = flight.pos.clone().addScaledVector(fwd, 1.6).addScaledVector(up, 1.15);
     camera.position.lerp(eye, 1 - Math.pow(0.0001, dt));
-    const look = flight.pos.clone().addScaledVector(fwd, 80);
+
+    const yaw = flight.heading + run.orbitYaw;
+    const pitch = flight.pitch + run.orbitPitch;
+    const cp = Math.cos(pitch);
+    const lookDir = new THREE.Vector3(Math.sin(yaw) * cp, Math.sin(pitch), -Math.cos(yaw) * cp);
+    const look = camera.position.clone().addScaledVector(lookDir, 80);
     camera.lookAt(look);
     return;
   }
@@ -454,6 +560,17 @@ function refreshHud() {
     targetDistM: dist,
     targetAngleDeg: angle,
     legLabel: run.mission.legs.length > 1 ? `LEG ${run.legIndex + 1}/${run.mission.legs.length}` : '',
+    fuel: damageModel.fuel,
+    damage: damageModel.damage,
+  });
+
+  setCockpitGauges(cockpitGroup, {
+    speed: flight.speedKnots,
+    alt: flight.altitudeFt,
+    vsi: flight.vspeed * 196.85,
+    turn: flight.bank,
+    fuel: damageModel.fuel,
+    rpm: flight.throttle * 2800,
   });
 }
 

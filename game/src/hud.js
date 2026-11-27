@@ -31,6 +31,8 @@ export function createHud() {
     gear: $('hud-gear'),
     wind: $('hud-wind'),
     cam: $('hud-cam'),
+    fuel: $('hud-fuel'),
+    dmg: $('hud-damage'),
     horizon: $('horizon'),
     missionName: $('mission-name'),
     missionObj: $('mission-obj'),
@@ -40,10 +42,11 @@ export function createHud() {
     targetArrow: document.querySelector('#target .ring-arrow'),
     target: $('target'),
   };
-  const hctx = els.horizon.getContext('2d');
+  const hctx = els.horizon ? els.horizon.getContext('2d') : null;
   let messageTimer = 0;
 
   function drawHorizon(pitch, bank) {
+    if (!hctx) return;
     const S = 148;
     const c = S / 2;
     hctx.clearRect(0, 0, S, S);
@@ -94,6 +97,7 @@ export function createHud() {
   }
 
   function drawTape(headingDeg) {
+    if (!els.tape) return;
     const parts = [];
     for (let off = -90; off <= 90; off += 30) {
       parts.push(compassLabel(headingDeg + off));
@@ -103,20 +107,28 @@ export function createHud() {
 
   return {
     show() {
-      els.hud.classList.add('on');
+      if (els.hud) els.hud.classList.add('on');
     },
     hide() {
-      els.hud.classList.remove('on');
+      if (els.hud) els.hud.classList.remove('on');
     },
     setMission(name, objective, wind) {
-      els.missionName.textContent = name;
-      els.missionObj.textContent = objective;
-      els.wind.textContent = wind;
+      if (els.missionName) els.missionName.textContent = name;
+      if (els.missionObj) els.missionObj.textContent = objective;
+      if (els.wind) els.wind.textContent = wind;
     },
     setCamera(name) {
-      els.cam.textContent = name;
+      if (els.cam) els.cam.textContent = name;
+    },
+    showMessage(text, ms = 2200) {
+      if (!els.message) return;
+      els.message.textContent = text;
+      els.message.classList.add('show');
+      clearTimeout(messageTimer);
+      messageTimer = setTimeout(() => els.message.classList.remove('show'), ms);
     },
     flash(text, ms = 2200) {
+      if (!els.message) return;
       els.message.textContent = text;
       els.message.classList.add('show');
       clearTimeout(messageTimer);
@@ -126,33 +138,48 @@ export function createHud() {
      * Refresh every instrument from the live state.
      * state: { speedKt, altFt, vsiFpm, headingDeg, pitch, bank, throttle,
      *   flaps, gearDown, ringsDone, ringsTotal, score, elapsedSec,
-     *   targetDistM, targetAngleDeg|null, legLabel }
+     *   targetDistM, targetAngleDeg|null, legLabel, fuel, damage }
      */
     update(s) {
-      els.speed.textContent = String(Math.round(s.speedKt));
-      els.alt.textContent = String(Math.round(s.altFt));
+      if (els.speed) els.speed.textContent = String(Math.round(s.speedKt));
+      if (els.alt) els.alt.textContent = String(Math.round(s.altFt));
       const vsi = Math.round(s.vsiFpm);
-      els.vsi.textContent = (vsi >= 0 ? '+' : '') + String(vsi);
+      if (els.vsi) els.vsi.textContent = (vsi >= 0 ? '+' : '') + String(vsi);
       drawTape(s.headingDeg);
-      els.hdg.textContent = `${pad3(s.headingDeg)}°`;
-      els.thr.textContent = String(Math.round(s.throttle * 100));
-      els.flaps.textContent = s.flaps ? 'DOWN' : 'UP';
-      els.gear.textContent = s.gearDown ? 'DOWN' : 'UP';
+      if (els.hdg) els.hdg.textContent = `${pad3(s.headingDeg)}°`;
+      if (els.thr) els.thr.textContent = String(Math.round(s.throttle * 100));
+      if (els.flaps) els.flaps.textContent = s.flaps ? 'DOWN' : 'UP';
+      if (els.gear) els.gear.textContent = s.gearDown ? 'DOWN' : 'UP';
+
+      // Fuel and Damage readout
+      if (els.fuel && s.fuel !== undefined) {
+        els.fuel.textContent = String(Math.max(0, Math.round(s.fuel * 100)));
+      }
+      if (els.dmg && s.damage !== undefined) {
+        els.dmg.textContent = String(Math.max(0, Math.round(s.damage * 100)));
+      }
+
       drawHorizon(s.pitch, s.bank);
       const mm = String(Math.floor(s.elapsedSec / 60)).padStart(2, '0');
       const ss = String(Math.floor(s.elapsedSec % 60)).padStart(2, '0');
-      els.missionStats.textContent =
-        `RINGS ${s.ringsDone}/${s.ringsTotal} · SCORE ${s.score} · ${mm}:${ss}${s.legLabel ? ' · ' + s.legLabel : ''}`;
-      if (s.targetDistM === null) {
-        els.target.style.display = 'none';
-      } else {
-        els.target.style.display = 'block';
-        els.targetDist.textContent = `${Math.round(s.targetDistM)} m`;
-        if (s.targetAngleDeg === null) {
-          els.targetArrow.style.opacity = '0';
+      if (els.missionStats) {
+        els.missionStats.textContent =
+          `RINGS ${s.ringsDone}/${s.ringsTotal} · SCORE ${s.score} · ${mm}:${ss}${s.legLabel ? ' · ' + s.legLabel : ''}`;
+      }
+      if (els.target) {
+        if (s.targetDistM === null) {
+          els.target.style.display = 'none';
         } else {
-          els.targetArrow.style.opacity = '1';
-          els.targetArrow.style.transform = `rotate(${s.targetAngleDeg}deg)`;
+          els.target.style.display = 'block';
+          if (els.targetDist) els.targetDist.textContent = `${Math.round(s.targetDistM)} m`;
+          if (els.targetArrow) {
+            if (s.targetAngleDeg === null) {
+              els.targetArrow.style.opacity = '0';
+            } else {
+              els.targetArrow.style.opacity = '1';
+              els.targetArrow.style.transform = `rotate(${s.targetAngleDeg}deg)`;
+            }
+          }
         }
       }
     },

@@ -128,7 +128,10 @@ export function buildPlaneMesh() {
   lamp(0xffffff, 0, 0.6, 5.9);
 
   group.traverse((o) => {
-    if (o.isMesh) o.castShadow = false;
+    if (o.isMesh) {
+      o.castShadow = true;
+      o.receiveShadow = false;
+    }
   });
   return { group, props, gear, lights };
 }

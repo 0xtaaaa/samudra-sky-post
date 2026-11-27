@@ -149,6 +149,12 @@ export function createWorld(scene, seed, mission) {
   scene.add(hemi);
   const sun = new THREE.DirectionalLight(palette.sun, palette.sunI);
   sun.position.set(...palette.sunPos);
+  sun.castShadow = true;
+  sun.shadow.mapSize.width = 1024;
+  sun.shadow.mapSize.height = 1024;
+  sun.shadow.camera.near = 10;
+  sun.shadow.camera.far = 8000;
+  sun.shadow.bias = -0.0005;
   scene.add(sun);
   const amb = new THREE.AmbientLight(0xffffff, 0.18);
   scene.add(amb);
@@ -260,6 +266,7 @@ export function createWorld(scene, seed, mission) {
     geo,
     new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0 }),
   );
+  terrain.receiveShadow = true;
   scene.add(terrain);
 
   // Ocean: one big plane at the waterline, faintly transparent.
