@@ -22,6 +22,14 @@
   #hud-tl .panel { padding: 8px 12px; min-width: 92px; }
   #hud-tr { position: absolute; top: 14px; right: 14px; display: flex; gap: 10px; }
   #hud-tr .panel { padding: 8px 12px; min-width: 92px; text-align: right; }
+
+
+  #wind-readout { font-size: 13px; color: #a4e5ff; margin-top: 4px; letter-spacing: 0.08em; }
+  #alert-strip { position: absolute; top: 78px; left: 50%; transform: translateX(-50%);
+    padding: 6px 18px; border: 2px solid #ff3333; background: rgba(20, 10, 10, 0.85);
+    font-size: 14px; font-weight: 800; letter-spacing: 0.12em; color: #ff3333;
+    border-radius: 6px; box-shadow: 0 0 16px rgba(255, 50, 50, 0.4); opacity: 0;
+    transition: opacity 0.15s ease-in-out; text-transform: uppercase; pointer-events: none; }
   #compass { position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
     width: 340px; padding: 6px 0 8px; text-align: center; overflow: hidden; }
   #compass-tape { font-size: 15px; letter-spacing: 0.18em; color: #dff6ff; white-space: nowrap; }
@@ -80,6 +88,8 @@
 <div id="shot-caption"></div>
 
 <div id="hud">
+  <div id="alert-strip" class="mono"></div>
+
   <div id="hud-tl">
     <div class="panel"><div class="label">Airspeed</div><div class="value mono"><span id="hud-speed">0</span> <span class="unit">kt</span></div></div>
     <div class="panel"><div class="label">Altitude</div><div class="value mono"><span id="hud-alt">0</span> <span class="unit">ft</span></div></div>
@@ -97,7 +107,7 @@
   </div>
   <div id="hud-bl">
     <canvas id="horizon" class="panel" width="148" height="148"></canvas>
-    <div class="panel"><div class="label">Wind</div><div class="value mono" style="font-size:19px"><span id="hud-wind">—</span></div>
+    <div class="panel"><div class="label">Wind</div><div class="value mono" style="font-size:19px"><span id="hud-wind">—</span></div><div id="wind-readout" class="mono">—</div>
     <div class="label" style="margin-top:6px">Camera</div><div class="mono" style="font-size:13px;color:#dff6ff" id="hud-cam">CHASE</div></div>
   </div>
   <div id="hud-br">

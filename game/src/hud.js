@@ -30,6 +30,8 @@ export function createHud() {
     flaps: $('hud-flaps'),
     gear: $('hud-gear'),
     wind: $('hud-wind'),
+    windReadout: $('wind-readout'),
+    alertStrip: $('alert-strip'),
     cam: $('hud-cam'),
     fuel: $('hud-fuel'),
     dmg: $('hud-damage'),
@@ -159,6 +161,22 @@ export function createHud() {
         els.dmg.textContent = String(Math.max(0, Math.round(s.damage * 100)));
       }
 
+      if (els.windReadout && s.windReadout !== undefined) {
+        els.windReadout.textContent = s.windReadout;
+      }
+      if (els.alertStrip && s.alert !== undefined) {
+        if (!s.alert) {
+          els.alertStrip.style.opacity = '0';
+          els.alertStrip.textContent = '';
+        } else {
+          els.alertStrip.textContent = s.alert.text || '';
+          if (s.alert.color) {
+            els.alertStrip.style.color = s.alert.color;
+            els.alertStrip.style.borderColor = s.alert.color;
+          }
+          els.alertStrip.style.opacity = s.alert.visible === false ? '0.2' : '1';
+        }
+      }
       drawHorizon(s.pitch, s.bank);
       const mm = String(Math.floor(s.elapsedSec / 60)).padStart(2, '0');
       const ss = String(Math.floor(s.elapsedSec % 60)).padStart(2, '0');

@@ -13,6 +13,12 @@ import { createAudio } from './audio.js';
 import { createInput } from './input.js';
 import { stageShot } from './shots.js';
 import { seedFromString } from './rng.js';
+import { WeatherSystem } from './weather.js';
+import { AlertSystem } from './alerts.js';
+import { RunScoring } from './scoring.js';
+import { FlightCameraRig } from './camera.js';
+import { TerrainDetailSystem } from './terrain_detail.js';
+
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -49,6 +55,13 @@ const input = createInput();
 const flight = new FlightModel();
 const damageModel = new DamageModel();
 const planeMesh = buildPlaneMesh();
+
+const runScoring = new RunScoring({ targetTime: 240, ringValue: 100, perfectRingBonus: 50 });
+const alertSystem = new AlertSystem(document.getElementById('alert-strip'));
+const cameraRig = new FlightCameraRig(camera, planeMesh.group);
+let weatherSystem = null;
+let terrainDetails = null;
+
 scene.add(planeMesh.group);
 
 // Cockpit group mounted at pilot's eye inside planeMesh.group:
@@ -136,6 +149,14 @@ function resetRun(missionIndex) {
   flight.flaps = false;
   run.throttleTarget = 0;
   damageModel.service();
+  runScoring.reset();
+  runScoring.targetTime = run.mission.parSeconds || 240;
+  if (weatherSystem) weatherSystem.dispose();
+  weatherSystem = new WeatherSystem(scene, run.mission.timeOfDay === 'storm' ? 'storm' : (run.mission.turbulence > 0.1 ? 'gust' : 'clear'));
+  if (terrainDetails) terrainDetails.dispose();
+  terrainDetails = new TerrainDetailSystem(scene, world.runways, SEED + missionIndex);
+  cameraRig.setMode(run.cameraMode);
+
   run.landingGrade = '';
   run.cameraMode = 'chase';
   run.orbitYaw = 0;
@@ -310,9 +331,19 @@ function syncMesh(dt) {
 
 function stepGame(dt, stick) {
   if (run.screen !== 'play' && !run.shotMode) return;
-  const wv = windVector(run.mission);
-  env.wind.set(wv.x, wv.y, wv.z);
-  env.turbulence = run.mission.turbulence;
+  if (weatherSystem) {
+    weatherSystem.update(dt, flight.pos);
+    const liveWind = weatherSystem.getWindVector();
+    env.wind.set(liveWind.x, liveWind.y, liveWind.z);
+    env.turbulence = run.mission.turbulence + weatherSystem.getTurbulence();
+  } else {
+    const wv = windVector(run.mission);
+    env.wind.set(wv.x, wv.y, wv.z);
+    env.turbulence = run.mission.turbulence;
+  }
+  if (terrainDetails) {
+    terrainDetails.update(run.elapsed, env.wind);
+  }
   env.runways = world.runways;
 
   // Throttle lever follows W/S.
@@ -369,7 +400,9 @@ function stepGame(dt, stick) {
       damageModel.hit(0.18);
     }
     run.landingGrade = grade;
-    run.score += pts;
+    const landingResult = runScoring.addLanding({ touchDownSpeed: flight.speed, verticalVelocity: prevVspeed, centerlineOffset: offsetM });
+    pts = landingResult.points;
+    run.score = runScoring.ringScore + runScoring.landingScore;
     const gradeMsg = `LANDING: ${grade} (+${pts})`;
     if (typeof hud.showMessage === 'function') hud.showMessage(gradeMsg);
     hud.flash(gradeMsg);
@@ -414,7 +447,8 @@ function stepGame(dt, stick) {
     const d = flight.pos.distanceTo(ring.pos);
     if (d < ring.radius * 0.95) {
       world.setRingState(ring, 'passed');
-      run.score += 100;
+      const earned = runScoring.addRing({ distanceToCenter: d, radius: ring.radius });
+      run.score = runScoring.ringScore + runScoring.landingScore;
       run.ringIndex += 1;
       audio.ring();
       hud.flash(`RING ${ringsDone()} / ${totalRings(run.mission)}  +100`);
@@ -467,6 +501,11 @@ const sim = {
     syncMesh(0);
   },
   tick: (dt, input) => stepGame(dt, input),
+  setCamera: (name) => {
+    run.cameraMode = name;
+    cameraRig.setMode(name);
+    hud.setCamera(name.toUpperCase());
+  },
   setScreen: (name) => {
     if (name === 'play') {
       showScreen('play');
@@ -480,51 +519,14 @@ const camPos = new THREE.Vector3(-40, 90, 120);
 const camTarget = new THREE.Vector3(0, 60, 0);
 
 function updateCamera(dt) {
-  const fwd = flight.forward;
-  const up = new THREE.Vector3(0, 1, 0);
-  if (run.cameraMode === 'cockpit') {
-    const lookStick = input.look();
-    run.orbitYaw = clamp(run.orbitYaw + lookStick.dx * 0.003, -1.4, 1.4);
-    run.orbitPitch = clamp(run.orbitPitch + lookStick.dy * 0.002, -0.6, 0.6);
-    run.orbitYaw *= Math.pow(0.4, dt);
-    run.orbitPitch *= Math.pow(0.4, dt);
-
-    const eye = flight.pos.clone().addScaledVector(fwd, 1.6).addScaledVector(up, 1.15);
-    camera.position.lerp(eye, 1 - Math.pow(0.0001, dt));
-
-    const yaw = flight.heading + run.orbitYaw;
-    const pitch = flight.pitch + run.orbitPitch;
-    const cp = Math.cos(pitch);
-    const lookDir = new THREE.Vector3(Math.sin(yaw) * cp, Math.sin(pitch), -Math.cos(yaw) * cp);
-    const look = camera.position.clone().addScaledVector(lookDir, 80);
-    camera.lookAt(look);
+  if (run.screen === 'title' || run.screen === 'over') {
     return;
   }
-  if (run.cameraMode === 'orbit') {
-    const yaw = run.orbitYaw;
-    const pitch = run.orbitPitch;
-    const r = 30;
-    const off = new THREE.Vector3(
-      Math.sin(yaw) * Math.cos(pitch) * r,
-      Math.sin(pitch) * r + 4,
-      Math.cos(yaw) * Math.cos(pitch) * r,
-    );
-    camera.position.lerp(flight.pos.clone().add(off), 1 - Math.pow(0.001, dt));
-    camera.lookAt(flight.pos);
-    return;
-  }
-  // Chase: behind and above, with the mouse-look offset decaying back.
   const look = input.look();
-  run.orbitYaw = clamp(run.orbitYaw + look.dx * 0.003, -1.2, 1.2);
-  run.orbitPitch = clamp(run.orbitPitch + look.dy * 0.002, -0.4, 0.9);
-  run.orbitYaw *= Math.pow(0.4, dt);
-  run.orbitPitch += (0.25 - run.orbitPitch) * Math.min(1, dt * 0.6);
-  const yaw = flight.heading + run.orbitYaw;
-  const back = new THREE.Vector3(-Math.sin(yaw), 0, Math.cos(yaw));
-  const desired = flight.pos.clone().addScaledVector(back, 17).addScaledVector(up, 4.5 + run.orbitPitch * 4);
-  camera.position.lerp(desired, 1 - Math.pow(0.0005, dt));
-  const lookAt = flight.pos.clone().addScaledVector(fwd, 30).addScaledVector(up, 1.2);
-  camera.lookAt(lookAt);
+  cameraRig.setLookOffset(look.dx * 0.003, look.dy * 0.002);
+  cameraRig.setMode(run.cameraMode);
+  const gustRatio = weatherSystem ? weatherSystem.gustFactor : 0;
+  cameraRig.update(dt, flight.speed / 80, gustRatio);
 }
 
 // ------------------------------------------------------------------ HUD refresh
@@ -543,6 +545,22 @@ function refreshHud() {
       angle = (Math.atan2(_v.x, -_v.y) * 180) / Math.PI;
     }
   }
+  const alertObj = alertSystem.update(FIXED_DT, {
+    airspeed: flight.speedKnots,
+    altitude: flight.altitudeFt,
+    verticalSpeed: flight.vspeed,
+    fuel: damageModel.fuel * 100,
+    gearDown: flight.gearDown,
+    maxSpeed: 105,
+    stallSpeed: 28,
+    distanceFromOrigin: flight.pos.length(),
+    maxRange: 3200
+  });
+
+  const windSpd = env.wind.length();
+  const windDirDeg = Math.round(((Math.atan2(env.wind.x, env.wind.z) * 180 / Math.PI) + 360) % 360);
+  const windStr = `${Math.round(windSpd * 1.94)} kt @ ${windDirDeg}°`;
+
   hud.update({
     speedKt: flight.speedKnots,
     altFt: flight.altitudeFt,
@@ -562,6 +580,8 @@ function refreshHud() {
     legLabel: run.mission.legs.length > 1 ? `LEG ${run.legIndex + 1}/${run.mission.legs.length}` : '',
     fuel: damageModel.fuel,
     damage: damageModel.damage,
+    alert: alertObj,
+    windReadout: windStr
   });
 
   setCockpitGauges(cockpitGroup, {
@@ -598,7 +618,7 @@ function frame(now) {
       hud.flash(audio.muted ? 'SOUND OFF' : 'SOUND ON');
     }
     if (keys.has('KeyC')) {
-      run.cameraMode = run.cameraMode === 'chase' ? 'cockpit' : run.cameraMode === 'cockpit' ? 'orbit' : 'chase';
+      run.cameraMode = cameraRig.cycleMode();
       hud.setCamera(run.cameraMode.toUpperCase());
       hud.flash(`CAMERA — ${run.cameraMode.toUpperCase()}`);
     }
