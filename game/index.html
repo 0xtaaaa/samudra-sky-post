@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Samudra Sky Post — Island Mail Run</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0a1420;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #eaf6ff; }
+  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .mono { font-family: Consolas, "SF Mono", Menlo, "Liberation Mono", monospace; }
+  .panel { background: rgba(6, 18, 30, 0.62); border: 1px solid rgba(127, 231, 255, 0.35);
+    border-radius: 10px; box-shadow: 0 0 18px rgba(127, 231, 255, 0.12), inset 0 0 24px rgba(127, 231, 255, 0.05);
+    backdrop-filter: blur(2px); }
+  .label { font-size: 10px; letter-spacing: 0.14em; color: #8fd8ef; text-transform: uppercase; }
+  .value { font-size: 26px; line-height: 1.05; color: #ffd9a0; text-shadow: 0 0 10px rgba(255, 179, 71, 0.55); }
+  .unit { font-size: 11px; color: #9fd8ef; }
+  #hud { position: fixed; inset: 0; pointer-events: none; display: none; }
+  #hud.on { display: block; }
+  #hud-tl { position: absolute; top: 14px; left: 14px; display: flex; gap: 10px; }
+  #hud-tl .panel { padding: 8px 12px; min-width: 92px; }
+  #hud-tr { position: absolute; top: 14px; right: 14px; display: flex; gap: 10px; }
+  #hud-tr .panel { padding: 8px 12px; min-width: 92px; text-align: right; }
+  #compass { position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+    width: 340px; padding: 6px 0 8px; text-align: center; overflow: hidden; }
+  #compass-tape { font-size: 15px; letter-spacing: 0.18em; color: #dff6ff; white-space: nowrap; }
+  #compass-hdg { font-size: 22px; color: #ffd9a0; text-shadow: 0 0 10px rgba(255, 179, 71, 0.55); }
+  #compass-needle { color: #ff5d5d; font-size: 13px; line-height: 0.8; }
+  #hud-bl { position: absolute; left: 14px; bottom: 14px; display: flex; gap: 10px; align-items: flex-end; }
+  #horizon { width: 148px; height: 148px; border-radius: 50%; }
+  #hud-bl .panel { padding: 8px 10px; }
+  #hud-br { position: absolute; right: 14px; bottom: 14px; text-align: right; }
+  #hud-br .panel { padding: 10px 14px; min-width: 240px; }
+  #mission-name { font-size: 15px; font-weight: 700; color: #ffd9a0; }
+  #mission-obj { font-size: 13px; color: #dff6ff; margin-top: 2px; }
+  #mission-stats { font-size: 13px; color: #9fd8ef; margin-top: 6px; }
+  #message { position: absolute; top: 22%; left: 50%; transform: translateX(-50%);
+    font-size: 30px; font-weight: 800; color: #ffe9bd; text-shadow: 0 2px 18px rgba(0,0,0,0.7), 0 0 24px rgba(255, 179, 71, 0.6);
+    opacity: 0; transition: opacity 0.25s; text-align: center; letter-spacing: 0.04em; }
+  #message.show { opacity: 1; }
+  #target { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center; }
+  #target .ring-dist { font-size: 13px; color: #7fe7ff; text-shadow: 0 0 8px rgba(0,0,0,0.8); }
+  #target .ring-arrow { font-size: 22px; color: #ffd9a0; text-shadow: 0 0 10px rgba(0,0,0,0.9); }
+  .screen { position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    background: linear-gradient(180deg, rgba(4, 12, 22, 0.25) 0%, rgba(4, 12, 22, 0.72) 100%); }
+  .screen.on { display: flex; }
+  .card { max-width: 640px; width: calc(100% - 48px); padding: 28px 32px; text-align: center; }
+  .card h1 { margin: 0 0 4px; font-size: 44px; letter-spacing: 0.06em; color: #ffd9a0;
+    text-shadow: 0 0 28px rgba(255, 179, 71, 0.5); }
+  .card h2 { margin: 0 0 10px; font-size: 20px; color: #7fe7ff; font-weight: 600; letter-spacing: 0.08em; }
+  .card p { margin: 8px 0; font-size: 15px; line-height: 1.55; color: #d9efff; }
+  .card .keys { font-size: 13px; color: #9fd8ef; line-height: 1.9; }
+  .card .keys b { color: #ffd9a0; }
+  .btn { pointer-events: auto; cursor: pointer; display: inline-block; margin-top: 14px; padding: 12px 30px;
+    font-size: 17px; font-weight: 700; letter-spacing: 0.08em; color: #0a1420; background: #ffb347;
+    border: none; border-radius: 999px; box-shadow: 0 0 26px rgba(255, 179, 71, 0.55); }
+  .btn:hover { background: #ffc46b; }
+  .mission-row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin-top: 12px; }
+  .mission-pick { pointer-events: auto; cursor: pointer; padding: 8px 12px; font-size: 13px;
+    border: 1px solid rgba(127, 231, 255, 0.4); border-radius: 8px; color: #dff6ff; background: rgba(6, 18, 30, 0.55); }
+  .mission-pick:hover, .mission-pick.sel { border-color: #ffb347; color: #ffd9a0; }
+  #vignette { position: fixed; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 55%, rgba(2, 8, 16, 0.42) 100%); }
+</style>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js" } }
+</script>
+</head>
+<body>
+<canvas id="game" aria-label="Samudra Sky Post: fly the mail plane through the rings and land on the island strips"></canvas>
+<p id="status" role="status" aria-live="polite"></p>
+<div id="vignette"></div>
+
+<div id="hud">
+  <div id="hud-tl">
+    <div class="panel"><div class="label">Airspeed</div><div class="value mono"><span id="hud-speed">0</span> <span class="unit">kt</span></div></div>
+    <div class="panel"><div class="label">Altitude</div><div class="value mono"><span id="hud-alt">0</span> <span class="unit">ft</span></div></div>
+    <div class="panel"><div class="label">Climb</div><div class="value mono"><span id="hud-vsi">0</span> <span class="unit">fpm</span></div></div>
+  </div>
+  <div id="compass" class="panel">
+    <div id="compass-needle">▼</div>
+    <div id="compass-tape" class="mono">N&nbsp;&nbsp;030&nbsp;&nbsp;060&nbsp;&nbsp;E&nbsp;&nbsp;120&nbsp;&nbsp;150&nbsp;&nbsp;S&nbsp;&nbsp;210&nbsp;&nbsp;240&nbsp;&nbsp;W&nbsp;&nbsp;300&nbsp;&nbsp;330&nbsp;&nbsp;N</div>
+    <div id="compass-hdg" class="mono">000°</div>
+  </div>
+  <div id="hud-tr">
+    <div class="panel"><div class="label">Throttle</div><div class="value mono"><span id="hud-thr">0</span><span class="unit">%</span></div></div>
+    <div class="panel"><div class="label">Flaps · Gear</div><div class="value mono" style="font-size:19px"><span id="hud-flaps">UP</span> · <span id="hud-gear">UP</span></div></div>
+  </div>
+  <div id="hud-bl">
+    <canvas id="horizon" class="panel" width="148" height="148"></canvas>
+    <div class="panel"><div class="label">Wind</div><div class="value mono" style="font-size:19px"><span id="hud-wind">—</span></div>
+    <div class="label" style="margin-top:6px">Camera</div><div class="mono" style="font-size:13px;color:#dff6ff" id="hud-cam">CHASE</div></div>
+  </div>
+  <div id="hud-br">
+    <div class="panel">
+      <div id="mission-name">—</div>
+      <div id="mission-obj">—</div>
+      <div id="mission-stats" class="mono">RINGS 0/0 · SCORE 0 · 00:00</div>
+    </div>
+  </div>
+  <div id="message"></div>
+  <div id="target"><div class="ring-arrow">⌄</div><div class="ring-dist mono" id="target-dist"></div></div>
+</div>
+
+<div id="screen-title" class="screen on">
+  <div class="card panel">
+    <h1>SAMUDRA SKY POST</h1>
+    <h2>ISLAND MAIL RUN · KEPULAUAN SAMUDRA</h2>
+    <p>You are the mail pilot of <b>Nuri-7</b>, a twin-prop workhorse. Dawn is breaking over the
+    Samudra islands: thread the glowing mail rings, drop the post, and set her down gently on
+    the island strips — before the weather turns.</p>
+    <p>Five mail runs, from a calm first light to a full storm post. Every ring, every soft
+    landing, every second under par adds to your postmaster score.</p>
+    <div class="keys">
+      <b>W / S</b> throttle &nbsp;·&nbsp; <b>↑ / ↓</b> pitch &nbsp;·&nbsp; <b>← / →</b> bank &amp; turn<br>
+      <b>F</b> flaps &nbsp;·&nbsp; <b>G</b> landing gear &nbsp;·&nbsp; <b>C</b> camera &nbsp;·&nbsp; <b>drag mouse</b> look around<br>
+      <b>P</b> pause &nbsp;·&nbsp; <b>M</b> mute &nbsp;·&nbsp; <b>R</b> restart run
+    </div>
+    <div class="mission-row" id="mission-picks"></div>
+    <button class="btn" id="btn-fly">FLY THE FIRST RUN ▸</button>
+  </div>
+</div>
+
+<div id="screen-pause" class="screen">
+  <div class="card panel">
+    <h2>PAUSED</h2>
+    <p>Nuri-7 is holding her breath. The mail waits for no one — but it can wait a minute.</p>
+    <button class="btn" id="btn-resume">RESUME ▸</button>
+  </div>
+</div>
+
+<div id="screen-over" class="screen">
+  <div class="card panel">
+    <h1 id="over-title">RUN COMPLETE</h1>
+    <h2 id="over-sub">—</h2>
+    <p id="over-stats">—</p>
+    <button class="btn" id="btn-again">FLY AGAIN ▸</button>
+    <button class="btn" id="btn-next" style="background:#7fe7ff">NEXT RUN ▸</button>
+  </div>
+</div>
+
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
