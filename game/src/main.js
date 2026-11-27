@@ -22,6 +22,7 @@ import { CampaignSystem } from './campaign.js';
 import { RadioSystem } from './radio.js';
 import { LogbookSystem } from './logbook.js';
 import { HangarSystem } from './hangar.js';
+import { StampBook } from './stamps.js';
 
 
 const $ = (id) => document.getElementById(id);
@@ -67,6 +68,7 @@ const campaign = new CampaignSystem();
 const radio = new RadioSystem();
 const logbook = new LogbookSystem();
 const hangar = new HangarSystem();
+const stampBook = new StampBook();
 let weatherSystem = null;
 let terrainDetails = null;
 
@@ -257,6 +259,24 @@ function endRun(crashed, reason) {
   $('over-title').textContent = title;
   $('over-sub').textContent = sub;
   $('over-stats').textContent = stats;
+  let previousBest = 0;
+  try {
+    const key = `samudra-best-${run.mission.id}`;
+    previousBest = Number(window.localStorage.getItem(key) || 0);
+  } catch {
+    // Storage may be unavailable
+  }
+  const isBestBeaten = !crashed && run.score > previousBest;
+  const earnedStamps = stampBook.awardFor({
+    ...run,
+    ringsHit: ringsDone(),
+    ringsTotal: totalRings(run.mission),
+    fuelLeft: damageModel.fuel,
+    damage: damageModel.damage,
+    previousBest,
+    isBestBeaten,
+  }, run.score);
+  renderOverStamps(earnedStamps);
   $('btn-next').style.display = crashed ? 'none' : 'inline-block';
   if (!run.shotMode) {
     showScreen('over');
@@ -292,6 +312,56 @@ function endRun(crashed, reason) {
   } catch {
     // Storage may be unavailable; the score still stands for this run.
   }
+}
+
+function renderOverStamps(earnedStamps = []) {
+  let container = $('over-stamps-container');
+  if (!container) {
+    const overCard = document.querySelector('#screen-over .card');
+    if (overCard) {
+      container = document.createElement('div');
+      container.id = 'over-stamps-container';
+      container.style.marginTop = '14px';
+      container.style.marginBottom = '8px';
+      const btnAgain = $('btn-again');
+      if (btnAgain) overCard.insertBefore(container, btnAgain);
+      else overCard.appendChild(container);
+    }
+  }
+  if (!container) return;
+
+  container.innerHTML = '';
+  if (!earnedStamps || earnedStamps.length === 0) {
+    const note = document.createElement('div');
+    note.className = 'label';
+    note.style.opacity = '0.7';
+    note.style.letterSpacing = '0.12em';
+    note.textContent = 'NO NEW POSTAL STAMPS THIS SORTIE';
+    container.appendChild(note);
+    return;
+  }
+
+  const header = document.createElement('div');
+  header.className = 'label';
+  header.style.color = '#ffd9a0';
+  header.style.marginBottom = '8px';
+  header.textContent = `★ ${earnedStamps.length} NEW STAMP${earnedStamps.length > 1 ? 'S' : ''} AWARDED ★`;
+  container.appendChild(header);
+
+  const row = document.createElement('div');
+  row.style.display = 'flex';
+  row.style.gap = '10px';
+  row.style.justifyContent = 'center';
+  row.style.flexWrap = 'wrap';
+  for (const stamp of earnedStamps) {
+    const cvs = document.createElement('canvas');
+    cvs.width = 96;
+    cvs.height = 112;
+    cvs.title = `${stamp.name}: ${stamp.condition}`;
+    stampBook.render(cvs.getContext('2d'), stamp, 0, 0, 96, 112);
+    row.appendChild(cvs);
+  }
+  container.appendChild(row);
 }
 
 function ringsDone() {
